@@ -1,20 +1,28 @@
-import requests
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
 from typing import Optional
 from dotenv import dotenv_values
 import utils.spotify
-from utils.generateRandomString import generateRandomString
+import threading
+import queue
+import RPi.GPIO as GPIO
+import time
+import serial
+
 
 config = dotenv_values(".env")
 
-app = FastAPI()
+GPIO.setmode(GPIO.BOARD)
+
+pause_btn_gpio = 36
+prev_btn_gpio = 38
+next_btn_gpio = 40
+
+GPIO.setup(pause_btn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(prev_btn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(next_btn_gpio, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 
-redirect_uri: str = "http://localhost:8000/spotify/callback"
 client_id: Optional[str] = config["SPOTIFY_CLIENT_ID"]
 client_secret: Optional[str] = config["SPOTIFY_CLIENT_ID"]
-state: str = generateRandomString(20)
 
 # TODO: store data in sqlite
 access_token: str = config["SPOTIFY_ACCESS_TOKEN"] or ""
@@ -27,73 +35,75 @@ if client_secret is None:
     print("Missing Spotify client secret")
 
 
-@app.get("/")
-def index():
-    return {"Hello fam"}
+class Jukebox():
+    def __init__(self, ):
+        self.queue = queue.Queue()
+        self.event = threading.Event()
+        self.serial_thread = threading.Thread(
+            target=self.read_rfid, args=())
+        self.serial_thread.start()
+        self.gpio_thread = threading.Thread(target=self.read_gpio, args=())
+        self.gpio_thread.start()
+        self.periodicCall()
+
+    def periodicCall(self):
+        print("periodicCall")
+        self.processIncoming()
+        self.event.wait(0.5)
+        self.periodicCall()
+
+    def processIncoming(self):
+        print("processIncoming")
+        print(self.queue.qsize())
+        while self.queue.qsize():
+            try:
+                msg = self.queue.get(0)
+                if len(msg) == 12:
+                    print("msg", msg)
+                    utils.spotify.change_playlist(access_token)
+
+            except Queue.Empty:
+                pass
+
+    def read_rfid(self):
+        print("read_rfid")
+        ser = serial.Serial("/dev/ttyS0")
+        ser.baudrate = 9600
+        ser.flushInput()
+
+        msg = ""
+        while True:
+            while ser.inWaiting() > 0:
+                print("while ser > 0")
+                msg = ser.read(12)
+
+            if msg != "":
+                msg = msg.decode("utf-8")
+                print(msg)
+                self.queue.put(msg)
+                msg = ""
+
+    def read_gpio(self):
+        print("read_gpio")
+        while True:
+            pause_btn_state = GPIO.input(pause_btn_gpio)
+            prev_btn_state = GPIO.input(prev_btn_gpio)
+            next_btn_state = GPIO.input(next_btn_gpio)
+
+            if pause_btn_state == 0:
+                print("pause_btn_state == 0")
+                utils.spotify.switch_playback(access_token)
+                time.sleep(1)
+
+            if prev_btn_state == 0:
+                print("pause_btn_state == 0")
+                utils.spotify.previous_song(access_token)
+                time.sleep(1)
+
+            if next_btn_state == 0:
+                print("next_btn_state")
+                utils.spotify.next_song(access_token)
+                time.sleep(1)
 
 
-@app.get("/login")
-def login():
-    scope: str = "%20".join([
-        "user-read-private",
-        "user-read-email",
-        "user-read-playback-state",
-        "user-modify-playback-state",
-        "streaming",
-        "user-read-currently-playing"
-    ])
-
-    return RedirectResponse(f"https://accounts.spotify.com/authorize?response_type=token&client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&state={state}")
-
-
-# TODO: refresh token automatically
-@app.get("/spotify/callback")
-def spotify_callback(access_token: Optional[str] = None, token_type: Optional[str] = None, expires_in: Optional[int] = None, state: Optional[str] = None, error: Optional[str] = None):
-    print("spotify_callback")
-    print("access_token", access_token)
-    print("token_type", token_type)
-    print("expires_in", expires_in)
-    print("state", state)
-    print("error", error)
-
-
-@app.get("/switch-playback")
-def switch_playback():
-    print("/switch-playback")
-
-    current_state = requests.get("https://api.spotify.com/v1/me/player", headers={
-        "Authorization": f"Bearer {access_token}"
-    })
-
-    if current_state.status_code == 200 and current_state.json()["is_playing"] == True:
-        print("if music is playing")
-        utils.spotify.pause_music(access_token)
-        return {"msg": "music is playing"}
-    else:
-        print("else music is not playing")
-
-        utils.spotify.start_music(access_token)
-        return {"msg": "music is not playing"}
-
-    # return {current_state: current_state}
-
-
-@app.get("/change-volume/{volume_percentage}")
-def change_volume(volume_percentage: int):
-    result = utils.spotify.change_volume(access_token, volume_percentage)
-    if result:
-        return {"msg": "volume changed successfully"}
-    else:
-        return {"msg": "something went wrong"}
-
-
-@app.get("/skip")
-def next_song():
-    print("next_song")
-    utils.spotify.next_song(access_token)
-
-
-@app.get("/previous")
-def previous_song():
-    print("next_song")
-    utils.spotify.previous_song(access_token)
+jukebox = Jukebox()
