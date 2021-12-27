@@ -1,6 +1,6 @@
 from typing import Optional
 from dotenv import dotenv_values
-import utils.spotify
+from utils import spotify
 import threading
 import queue
 import RPi.GPIO as GPIO
@@ -35,12 +35,11 @@ if client_secret is None:
     print("Missing Spotify client secret")
 
 
-class Jukebox():
-    def __init__(self, ):
+class Jukebox:
+    def __init__(self):
         self.queue = queue.Queue()
         self.event = threading.Event()
-        self.serial_thread = threading.Thread(
-            target=self.read_rfid, args=())
+        self.serial_thread = threading.Thread(target=self.read_rfid, args=())
         self.serial_thread.start()
         self.gpio_thread = threading.Thread(target=self.read_gpio, args=())
         self.gpio_thread.start()
@@ -60,7 +59,7 @@ class Jukebox():
                 msg = self.queue.get(0)
                 if len(msg) == 12:
                     print("msg", msg)
-                    utils.spotify.change_playlist(access_token)
+                    spotify.change_playlist(access_token)
 
             except Queue.Empty:
                 pass
@@ -92,17 +91,17 @@ class Jukebox():
 
             if pause_btn_state == 0:
                 print("pause_btn_state == 0")
-                utils.spotify.switch_playback(access_token)
+                spotify.switch_playback(access_token)
                 time.sleep(1)
 
             if prev_btn_state == 0:
                 print("pause_btn_state == 0")
-                utils.spotify.previous_song(access_token)
+                spotify.previous_song(access_token)
                 time.sleep(1)
 
             if next_btn_state == 0:
                 print("next_btn_state")
-                utils.spotify.next_song(access_token)
+                spotify.next_song(access_token)
                 time.sleep(1)
 
 
